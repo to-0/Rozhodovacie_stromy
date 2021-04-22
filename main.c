@@ -65,17 +65,17 @@ BDD *BDD_create(char *bfunkcia){
         var_count++;
         pom/=2;
     }
-    printf("Count var %d\n",var_count);
+    //printf("Count var %d\n",var_count);
     root->value  = (char *)malloc(n+1);
     strcpy(root->value,bfunkcia);
     root->value[n] = '\0';
-    printf("%s\n",root->value);
+    //printf("%s\n",root->value);
     insert(root,&nodes,0);
     BDD *pointer = (BDD *)malloc(sizeof(BDD));
     pointer->root = root;
     pointer->num_nodes = nodes;
     pointer->num_variables = var_count;
-    printf("NODES %d\n",nodes);
+    //printf("NODES %d\n",nodes);
     return pointer;
 }
 char BDD_use(BDD *bdd, char *vstupy){
@@ -111,11 +111,24 @@ void join_end_nodes(NODE *current,NODE **zero, NODE **one,int *count){ //chcem s
                 current->right = *zero;
             }
         }
-        else if(*zero == NULL){
-            if(*current->left->value == '0')
+        else if(*zero == NULL){ //ak zero je null skontrolujem ci jedno z childov nema hodnotu null, a potom este  ten druhy child musim skontrolat ci nema rovnaku hodnotu, aby som ho mohol zredukovat
+            if(*current->left->value == '0'){
                 *zero = current->left;
-            else if (*current->right->value == '0')
+                if(*current->right->value == '0' && current->right != *zero){
+                    free(current->right);
+                    (*count)++;
+                    current->right = *zero;
+                }
+            }
+            else if (*current->right->value == '0'){
                 *zero = current->right;
+                if(*current->left->value == '0' && current->left != *zero){ //ese skontrolovat laveho childa ci sa nerovna 0 a uvolnit ked tak
+                    free(current->left);
+                    (*count)++;
+                    current->left = *zero;
+                }
+            }
+
         }
         if(*one!=NULL){
             if(*current->left->value == '1' && current->left != *one){
@@ -130,26 +143,30 @@ void join_end_nodes(NODE *current,NODE **zero, NODE **one,int *count){ //chcem s
             }
         }
         else{
-            if(*current->left->value == '1')
+            if(*current->left->value == '1'){
                 *one = current->left;
-            else if (*current->right->value == '1')
+                if(*current->right->value == '1' && current->right != *one){
+                    free(current->right);
+                    (*count)++;
+                    current->right = *one;
+                }
+            }
+            else if (!strcmp(current->right->value,"1")){
+                if(*current->left->value == '1' && current->left != *one) {
+                    free(current->left);
+                    (*count)++;
+                    current->left = *one;
+                }
                 *one = current->right;
+            }
+
         }
         return;
     }
     join_end_nodes(current->left,zero,one,count);
     join_end_nodes(current->right,zero,one,count);
 }
-/*void free_subtree(NODE *e,int *count){
-    int n =  strlen(e->value);
-    if(n==1){
-        return;
-    }
-    free_subtree(e->left,count);
-    free_subtree(e->right,count);
-    free(e);
-    (*count)+=2;
-}*/
+
 void reduce_inner_nodes(TABLE_EL **table,int n,int *count){
     int i;
     for(i=n-2;i>0;i--){ //prechadzam od preposlednej urovne po root, idem od konca lebo inac ked mazem cely podstrom tak by mi to v tabulke ukazovalo zle hodnoty kedze uz mazem strom
@@ -165,6 +182,7 @@ void reduce_inner_nodes(TABLE_EL **table,int n,int *count){
                 else parent->right = el1->node->left;
                 el1->node->left->parent = parent; //nastavim spravneho rodica
                 free(el1->node); //a ten podstrom vymazem
+                el1->node = NULL; //toto kvoli uvolnovaniu celeho diagramu potom, aby to nepadalo, nastavim na null ukazovatel na node
                 (*count)++;
                 el1 = el1->next;
                 continue; //pokracujem dalej v cykle nepotrebujem ist aj do vnutorneho el2
@@ -267,12 +285,17 @@ void print_table(TABLE_EL **table, int n){
        printf("\n");
    }
 }
-void fill_table(TABLE_EL **table,NODE *current, int level){ //rekurzivne naplnim tabulku
-    if(current->left == NULL || current->right == NULL) return;
+void fill_table(TABLE_EL **table,NODE *current, int level) { //rekurzivne naplnim tabulku
+    if (current->left == NULL || current->right == NULL) return;
     TABLE_EL *element = table[level];
 
-    while(element!=NULL && element->next!=NULL) //iba sa nastavim na koniec spajaneho zoznamu
+    while (element != NULL) //iba sa nastavim na koniec spajaneho zoznamu
+    {
+        if(element->next == NULL)
+            break;
         element = element->next;
+    }
+
     TABLE_EL  *new_element= (TABLE_EL*)malloc(sizeof(TABLE_EL));
     new_element->node = current->left;
     new_element->next = (TABLE_EL*)malloc(sizeof(TABLE_EL));
@@ -285,27 +308,64 @@ void fill_table(TABLE_EL **table,NODE *current, int level){ //rekurzivne naplnim
     fill_table(table,current->left,level+1);
     fill_table(table,current->right,level+1);
 }
-int BDD_reduce(BDD *bdd){
+/**
+ * Redukuje na poslednej urovni duplicitne ukazovatele na rovnake nodes, pretoze pred vytvorenim tabulky somrekurizvne volal reduce outer ends
+ */
+void reduce_table_after_recursion(TABLE_EL **table,int n){ //volam iba ked redukujem rekurzivne vonkajsie uzly, a vycistim poslednu uroven tabulky, aby tam viac-krat nebolo to iste... (tie iste nodes)
+    int k = n-1;
+    TABLE_EL  *e = table[k];
+    TABLE_EL *e2 = NULL;
+    while(e!=NULL){
+        e2 = e->next;
+        TABLE_EL *prev = e;
+        while(e2!=NULL){
+            if( e!= NULL && e2!=NULL && e2->node == e->node){
+                prev->next = e2->next;
+                free(e2);
+                e2 = prev->next;
+                continue;
+            }
+            prev = e2;
+            e2 = e2->next;
+        }
+        e = e->next;
+    }
+}
+
+int BDD_reduce(BDD *bdd,TABLE_EL **table){
     NODE *root = bdd->root;
     NODE *zero = NULL;
     NODE *one = NULL;
-    TABLE_EL **table =  (TABLE_EL **)malloc((bdd->num_variables)*sizeof(TABLE_EL *)); //numvariables+1 je vlastne pocet urovni vratane root
+    //TABLE_EL **table =  (TABLE_EL **)malloc((bdd->num_variables)*sizeof(TABLE_EL *)); //numvariables+1 je vlastne pocet urovni vratane root
     //index tabulky je uroven v strome
     int i;
-    int n = bdd->num_variables;
-    for(i=0;i<(bdd->num_variables);i++) //vynulujem tabulku
+    int n = bdd->num_variables+1;
+    for(i=0;i<n;i++) //vynulujem tabulku
         table[i]=NULL;
     table[0] = (TABLE_EL *)malloc(sizeof(TABLE_EL));
     table[0]->node = root; //na nultej urovni je iba koren
     table[0]->next = NULL; //nema ziadnych next
-    int nodes_reduced = 0;
-   //join_end_nodes(root,&zero,&one,&nodes_reduced);
-    fill_table(table,root,1); //podla neho vyplnim dalej tabulku
-    reduce_outer_ends(table,n,&zero,&one,&nodes_reduced);
+   int input;
+   int outer_reduced = 0;
+   printf("Sposob redukcie koncovych uzlov cez tabulku (1) alebo rekurzivne (2):\n");
+   scanf("%d",&input);
+   if(input == 1){
+       fill_table(table,root,1); //podla neho vyplnim dalej tabulku
+       reduce_outer_ends(table,n,&zero,&one,&outer_reduced);
+   }
+   else{
+       join_end_nodes(root,&zero,&one,&outer_reduced);
+       fill_table(table,root,1);
+       reduce_table_after_recursion(table,n);
+   }
+    /*fill_table(table,root,1); //podla neho vyplnim dalej tabulku
+    reduce_outer_ends(table,n,&zero,&one,&nodes_reduced);*/
     printf("ZERO %p ONE %p\n",zero,one);
-    //print_table(table,bdd->num_variables);
-    reduce_inner_nodes(table,n,&nodes_reduced);
-    return nodes_reduced;
+    int inner_reduced = 0;
+    reduce_inner_nodes(table,n,&inner_reduced);
+    printf("Inner %d outer:%d  \n",inner_reduced,outer_reduced);
+
+    return (outer_reduced+inner_reduced);
 }
 void preorder(NODE *n){
     if(n!=NULL){
@@ -325,8 +385,9 @@ void preorder(NODE *n){
 char *generate_input(int variables){
     int size=1;
     int i;
-    for(i=0;i<variables;i++)
-        size*=2;
+    size = (int)pow(2,variables);
+    /*for(i=0;i<variables;i++)
+        size*=2;*/
     char *str = (char *)malloc((size+1)*sizeof(char));
     for(i=0;i<size;i++){
         int r = rand()%2;
@@ -359,19 +420,34 @@ void test_use(BDD *bdd,int variables){
        printf("OK: %s\n",use_input);
     }
 }
+void free_bdd_and_table(TABLE_EL *table[],int n){
+    int i;
+    for(i=0;i<n;i++){
+        TABLE_EL *e1 = table[i];
+        TABLE_EL *prev = NULL;
+        while(e1!=NULL){
+            prev = e1;
+            //printf("%p\n",e1);
+            e1 = e1->next;
+            //ked vonkajsie uzly, redukujem cez rekurziu, v tabulke mam  poslednu vrstvu 2^n elementov ale tie nodes su duplicitne
+            if(i==n-1)
+            if(prev->node!=NULL){
+                //printf("prev->node %p\n",prev->node);
+                free(prev->node);
+            }
+            free(prev);
+        }
+    }
+
+}
 int main() {
-    //BF *input = (BF*)malloc(sizeof(BF));
-    //input->val = "11111111";
-    //input->length = strlen(input->val);
-   char *input = generate_input(15);
-    printf("%s\n",input);
+   char *input = generate_input(13);
+    //printf("%s\n",input);
     BDD *p = BDD_create(input);
     test_use(p,p->num_variables);
-    //printf("%c\n",BDD_use(p,"0001101"));
-    printf("nodes reduced: %d\n",BDD_reduce(p));
-    //printf("%c\n",BDD_use(p,"111110"));
-   // printf("%c\n",BDD_use(p,"101001"));
-    //preorder(p->root);
-    //printf("\n%c\n",BDD_use(p,"1001111"));
+    int n = p->num_variables+1; //+1 lebo vratane root urovne
+    TABLE_EL **table =  (TABLE_EL **)malloc((p->num_variables+1)*sizeof(TABLE_EL *));
+    printf("nodes reduced: %d\n",BDD_reduce(p,table));
+    free_bdd_and_table(table,n);
     return 0;
 }
