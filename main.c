@@ -2,10 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 typedef struct node{
-    char *value; //neviem ci nemam ako value brat ze BF??
-    struct node *parent; //??
-    int variable; //podla ktorej premennej sa rozhodujem, vlastne urcuje aj uroven v ktorej je
+    char *value;
+    struct node *parent; //rodic, potrebjem pri redukcii
+    int variable; //podla ktorej premennej sa rozhodujem vo funkcii use (ked preskakujem urovne v redukoovanom diagrame), vlastne urcuje aj uroven v ktorej je
     struct node *left;
     struct node *right;
 
@@ -20,6 +21,9 @@ typedef struct table_el{
     NODE *node;
     struct table_el *next;
 }TABLE_EL;
+
+TABLE_EL **table;
+int option;
 
 void insert(NODE *current,int *nodes, int level){
     int length = strlen(current->value);
@@ -58,7 +62,7 @@ BDD *BDD_create(char *bfunkcia){
     root->right = NULL;
     root->parent = NULL;
     root->variable = 0;
-    printf("%s\n",bfunkcia);
+    //printf("%s\n",bfunkcia);
     int var_count = 0;
     int pom = n;
     while(pom>1){
@@ -97,7 +101,7 @@ char BDD_use(BDD *bdd, char *vstupy){
      c = n->value[0];
      return c;
 }
-void join_end_nodes(NODE *current,NODE **zero, NODE **one,int *count){ //chcem sa dostat na predposlednu uroven a vzdy poprejata vsetko aby boli iba 2 koncove uzly
+void reduce_end_nodes_recursion(NODE *current, NODE **zero, NODE **one, int *count){ //chcem sa dostat na predposlednu uroven a vzdy poprejata vsetko aby boli iba 2 koncove uzly
     if(strlen(current->value)==2){ //ked uz som na predposlednej urovni tak chcem poprepajat tie koncove nodes aby existovali iba 2
         if(*zero!=NULL){
             if(*current->left->value == '0' && current->left != *zero){
@@ -163,8 +167,8 @@ void join_end_nodes(NODE *current,NODE **zero, NODE **one,int *count){ //chcem s
         }
         return;
     }
-    join_end_nodes(current->left,zero,one,count);
-    join_end_nodes(current->right,zero,one,count);
+    reduce_end_nodes_recursion(current->left, zero, one, count);
+    reduce_end_nodes_recursion(current->right, zero, one, count);
 }
 
 void reduce_inner_nodes(TABLE_EL **table,int n,int *count){
@@ -175,7 +179,6 @@ void reduce_inner_nodes(TABLE_EL **table,int n,int *count){
             TABLE_EL *el2 = el1->next;
             TABLE_EL *prev = el1;
             if(!strcmp(el1->node->left->value,el1->node->right->value)){ //ak je ten node zbytocny (LAVY POTOMOK == PRAVY POTOMOK
-                //free_subtree(el1->node->right,count); //cely pravy podstrom vymazem
                 NODE *parent = el1->node->parent;
                 if(parent->left == el1->node) //je to lavy child
                     parent->left = el1->node->left;
@@ -199,6 +202,7 @@ void reduce_inner_nodes(TABLE_EL **table,int n,int *count){
                     free(el2->node);
                     free(el2);
                     el2 = prev->next;
+                    continue;
                 }
                 prev = el2;
                 if(el2!=NULL)
@@ -235,7 +239,7 @@ void connect_new_outer(NODE **parent,NODE *child, NODE *new_child){
     }
 }
 
-void reduce_outer_ends(TABLE_EL **table, int n,NODE **zero, NODE **one, int *count){
+void reduce_outer_ends_table(TABLE_EL **table, int n,NODE **zero, NODE **one, int *count){
     int k = n-1; //chcem ist na poslednu vrstvu
     TABLE_EL *element = table[k];
     TABLE_EL *prev = NULL;
@@ -332,11 +336,10 @@ void reduce_table_after_recursion(TABLE_EL **table,int n){ //volam iba ked reduk
     }
 }
 
-int BDD_reduce(BDD *bdd,TABLE_EL **table){
+int BDD_reduce(BDD *bdd){
     NODE *root = bdd->root;
     NODE *zero = NULL;
     NODE *one = NULL;
-    //TABLE_EL **table =  (TABLE_EL **)malloc((bdd->num_variables)*sizeof(TABLE_EL *)); //numvariables+1 je vlastne pocet urovni vratane root
     //index tabulky je uroven v strome
     int i;
     int n = bdd->num_variables+1;
@@ -345,26 +348,37 @@ int BDD_reduce(BDD *bdd,TABLE_EL **table){
     table[0] = (TABLE_EL *)malloc(sizeof(TABLE_EL));
     table[0]->node = root; //na nultej urovni je iba koren
     table[0]->next = NULL; //nema ziadnych next
-   int input;
    int outer_reduced = 0;
-   printf("Sposob redukcie koncovych uzlov cez tabulku (1) alebo rekurzivne (2):\n");
-   scanf("%d",&input);
-   if(input == 1){
+    clock_t start,end;
+    double time_taken;
+   if(option == 1){
+       start = clock();
        fill_table(table,root,1); //podla neho vyplnim dalej tabulku
-       reduce_outer_ends(table,n,&zero,&one,&outer_reduced);
+       end = clock();
+       time_taken = ((double)end-start)/CLOCKS_PER_SEC*1000;
+       printf("Fill table %.2f\n",time_taken);
+       start= clock();
+       reduce_outer_ends_table(table,n,&zero,&one,&outer_reduced);
+       end = clock();
+       time_taken = ((double)end-start)/CLOCKS_PER_SEC*1000;
+       printf("Reduce outer table %.2f\n",time_taken);
    }
    else{
-       join_end_nodes(root,&zero,&one,&outer_reduced);
+       start = clock();
+       reduce_end_nodes_recursion(root, &zero, &one, &outer_reduced);
+       end = clock();
+       time_taken = ((double)end-start)/CLOCKS_PER_SEC*1000;
+       printf("Reduce outer recursion %.2f\n",time_taken);
+       start = clock();
        fill_table(table,root,1);
        reduce_table_after_recursion(table,n);
+       end = clock();
+       time_taken = ((double)end-start)/CLOCKS_PER_SEC*1000;
+       printf("Table fill and update %.2f\n",time_taken);
    }
-    /*fill_table(table,root,1); //podla neho vyplnim dalej tabulku
-    reduce_outer_ends(table,n,&zero,&one,&nodes_reduced);*/
-    printf("ZERO %p ONE %p\n",zero,one);
     int inner_reduced = 0;
     reduce_inner_nodes(table,n,&inner_reduced);
     printf("Inner %d outer:%d  \n",inner_reduced,outer_reduced);
-
     return (outer_reduced+inner_reduced);
 }
 void preorder(NODE *n){
@@ -399,26 +413,32 @@ char *generate_input(int variables){
     str[size] = '\0';
     return str;
 }
-void test_use(BDD *bdd,int variables){
-    int i,j;
+char **generate_table_use(int variables) {
+    int i, j;
     int remain;
-    char *use_input;
+    int combinations = pow(2, variables);
+    char **help_arr = (char **) malloc(combinations * (sizeof(char *)));
+    for (i = 0; i < combinations; i++) {
+        int num = i;
+        help_arr[i] = (char *) malloc((variables + 1) * sizeof(int));
+        for (j = variables - 1; j >= 0; j--) {
+            remain = num % 2;
+            if (remain == 0) {
+                help_arr[i][j] = '0';
+            } else help_arr[i][j] = '1';
+            num = num / 2;
+        }
+        help_arr[i][variables] = '\0';
+    }
+    return help_arr;
+}
+void test_use(BDD *bdd,int variables,char **help_table){
+    int i;
     int combinations = pow(2,variables);
     for(i= 0; i<combinations;i++){
-        int num = i;
-       use_input = (char *)malloc(sizeof(variables+1));
-       for(j=variables-1;j>=0;j--){
-           remain = num%2;
-           if(remain==0){
-               use_input[j]='0';
-           }
-           else use_input[j]='1';
-           num = num/2;
-       }
-       use_input[variables]='\0';
-        printf("%c\n",BDD_use(bdd,use_input));
-       printf("OK: %s\n",use_input);
-    }
+        BDD_use(bdd,help_table[i]);
+        //printf("%s\n",help_table[i]);
+        }
 }
 void free_bdd_and_table(TABLE_EL *table[],int n){
     int i;
@@ -441,13 +461,43 @@ void free_bdd_and_table(TABLE_EL *table[],int n){
 
 }
 int main() {
-   char *input = generate_input(13);
-    //printf("%s\n",input);
-    BDD *p = BDD_create(input);
-    test_use(p,p->num_variables);
-    int n = p->num_variables+1; //+1 lebo vratane root urovne
-    TABLE_EL **table =  (TABLE_EL **)malloc((p->num_variables+1)*sizeof(TABLE_EL *));
-    printf("nodes reduced: %d\n",BDD_reduce(p,table));
-    free_bdd_and_table(table,n);
+    int i;
+    clock_t start,end;
+    int vars;
+    printf("Pocet premennych:\n");
+    scanf("%d",&vars);
+    printf("Sposob redukcie koncovych uzlov cez tabulku (1) alebo rekurzivne (2):\n");
+    scanf("%d",&option);
+    printf("Pocet bdd na testovanie: \n");
+    int num;
+
+    scanf("%d",&num);
+    start = clock();
+    int all_nodes=0;
+    int reduced=0;
+    char **arr_use = generate_table_use(vars);
+    for(i = 0;i<num;i++){
+        char *input = generate_input(vars);
+        BDD *p = BDD_create(input);
+        int before_reduce = p->num_nodes;
+        all_nodes += before_reduce;
+        int n = p->num_variables+1; //+1 lebo vratane root urovne
+        table =  (TABLE_EL **)malloc((p->num_variables+1)*sizeof(TABLE_EL *));
+        int nodes_reduced = BDD_reduce(p);
+        reduced+=nodes_reduced;
+        printf("nodes reduced: %d\n",nodes_reduced);
+        int after_reduce = before_reduce - nodes_reduced;
+        test_use(p,p->num_variables,arr_use);
+        printf("Before reduce: %d nodes, after reduce %d nodes\n",before_reduce,after_reduce);
+        double percent = (double)((double) after_reduce/before_reduce)*100;
+        printf("Reduced diagram has %.2f percent of nodes of original diagram.\n",percent);
+        free_bdd_and_table(table,n);
+    }
+    double percent = (double)((double) (all_nodes-reduced)/all_nodes)*100;
+    printf("Reduced diagrams had %.2f percent of nodes of original diagrams nodes.\n",percent);
+    end = clock();
+    double time_taken = ((double)end-start)/CLOCKS_PER_SEC; // sekundy
+    time_taken /= 60; //minuty
+    printf("Celkovy cas behu algoritmu 2000x vytvorenie bdd stromu, redukcia a nasledne testovanie vsetkych moznosti %.2f minut\n",time_taken);
     return 0;
 }
